@@ -42,7 +42,7 @@ function saveConfig(config) {
  * Returns true when all required env vars are already set
  * (Railway / any non-interactive cloud environment).
  */
-function hasFullEnvConfig() {
+function getMissingEnvConfigs() {
   const required = [
     'EMAIL',
     'PASSWORD',
@@ -51,17 +51,18 @@ function hasFullEnvConfig() {
     'FACILITY_ID',
     'CURRENT_DATE',
   ];
-  const missing = required.filter((k) => !process.env[k]);
-  return missing.length === 0;
+  return required.filter((k) => !process.env[k]);
 }
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 async function main() {
+  const missing = getMissingEnvConfigs();
+
   // ── Railway / CI / non-interactive mode ────────────────────────────────────
   // If every required env var is already present we skip the wizard entirely
   // and start the bot immediately. This is the path used on Railway.
-  if (hasFullEnvConfig()) {
+  if (missing.length === 0) {
     console.log('\n╔═══════════════════════════════════════╗');
     console.log('║   🚀  US Visa Bot — Cloud Mode        ║');
     console.log('╚═══════════════════════════════════════╝\n');
@@ -88,6 +89,10 @@ async function main() {
     });
     return;
   }
+
+  // Log exactly what is missing if we're not starting in cloud mode
+  console.log(`⚠️ Missing environment variables for Cloud Mode: ${missing.join(', ')}`);
+
 
   // ── Local interactive wizard ───────────────────────────────────────────────
   console.log('\n╔═══════════════════════════════════════╗');
