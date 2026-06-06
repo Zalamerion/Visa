@@ -1,6 +1,8 @@
+// Config is set directly from interactive prompts in index.js via process.env
+// .env file is optional (used as fallback only)
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config(); // Load .env if it exists, but not required
 
 export function getConfig() {
   const config = {
@@ -9,7 +11,7 @@ export function getConfig() {
     scheduleId: process.env.SCHEDULE_ID,
     facilityId: process.env.FACILITY_ID,
     countryCode: process.env.COUNTRY_CODE,
-    refreshDelay: Number(process.env.REFRESH_DELAY || 3),
+    refreshDelay: Number(process.env.REFRESH_DELAY || 5),
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID
   };
@@ -23,7 +25,7 @@ function validateConfig(config) {
   const missing = required.filter(key => !config[key]);
 
   if (missing.length > 0) {
-    console.error(`Missing required environment variables: ${missing.map(k => k.toUpperCase()).join(', ')}`);
+    console.error(`❌ Missing required config: ${missing.map(k => k.toUpperCase()).join(', ')}`);
     process.exit(1);
   }
 }
