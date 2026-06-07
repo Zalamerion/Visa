@@ -48,7 +48,7 @@ export async function botCommand(options) {
   const minDate = options.min;
   let lastAlertedDate = null;
 
-  // ── Stats Tracking & Global State ───────────────────────────────────────────
+  // ── Stats Tracking & Global State (Persisted) ──────────────────────────────
   const startTime = new Date();
   let checksCount = 0;
   let lastCheckTime = null;
@@ -62,7 +62,7 @@ export async function botCommand(options) {
   log(`Mode: ${isBookMode ? '⚡ AUTOMATIC BOOKING' : '🔔 ALERT-ONLY'}`);
   log(`Daily summary report scheduled at ${REPORT_HOUR}:00 Tashkent time`);
 
-  // Notify start via Telegram
+  // 1. Notify start via Telegram (ONLY ONCE)
   if (config.telegramBotToken && config.telegramChatId) {
     await sendTelegramMessage(
       config.telegramBotToken,
@@ -71,7 +71,7 @@ export async function botCommand(options) {
       defaultMarkup
     );
 
-    // Start background Telegram updates listener (no await to keep it running concurrently)
+    // Start background Telegram updates listener (ONLY ONCE)
     startTelegramListener(config.telegramBotToken, config.telegramChatId, async (command) => {
       if (command === 'status_now') {
         const uptimeMs = new Date() - startTime;
@@ -168,40 +168,45 @@ export async function botCommand(options) {
     }).catch(err => log(`Failed to start Telegram updates listener: ${err.message}`));
   }
 
-  try {
-    sessionHeaders = await bot.initialize();
-    let consecutiveErrors = 0;
-
-    while (true) {
-      // ── Daily end-of-day report ─────────────────────────────────────────────
-      const todayStr  = tashkentDateString();
-      const nowHour   = tashkentHour();
-
-      if (nowHour === REPORT_HOUR && reportSentForDay !== todayStr) {
-        reportSentForDay = todayStr; // mark as sent
-
-        const reportMsg = bestDateToday
-          ? `📊 <b>Daily Visa Slot Report</b>\n📅 Date: <code>${todayStr}</code>\n\n` +
-            `✅ Best slot found today: <code>${bestDateToday}</code>\n` +
-            `🗓 Your current appointment: <code>${currentBookedDate}</code>\n` +
-            (bestDateToday < currentBookedDate
-              ? `⚡ <b>Earlier slot exists!</b> Consider booking it manually.`
-              : `ℹ️ No earlier slots than your current appointment were available today.`)
-          : `📊 <b>Daily Visa Slot Report</b>\n📅 Date: <code>${todayStr}</code>\n\n` +
-            `❌ No available slots were found today.\n` +
-            `🗓 Your current appointment: <code>${currentBookedDate}</code>`;
-
-        log(`[DAILY REPORT] Sending end-of-day summary...`);
-        await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, reportMsg, defaultMarkup);
-
-        bestDateToday = null;
+  // 2. Loop continuously (re-authenticates internally on catch)
+  while (true) {
+    try {
+      if (!sessionHeaders) {
+        log('Initializing visa bot session...');
+        sessionHeaders = await bot.initialize();
       }
 
-      if (nowHour === 0 && reportSentForDay === todayStr) {
-        // Clear flag at midnight so the next day's report will run
-      }
-      // ─────────────────────────────────────────────────────────────────────────
+      // ── Daily report trigger ───────────────────────────────────────────────
+      const todayStr = tashkentDateString();
+      const nowHour  = tashkentHour();
 
+      if (nowHour === REPORT_HOUR) {
+        if (reportSentForDay !== todayStr) {
+          reportSentForDay = todayStr; // mark as sent for today
+
+          const reportMsg = bestDateToday
+            ? `📊 <b>Daily Visa Slot Report</b>\n📅 Date: <code>${todayStr}</code>\n\n` +
+              `✅ Best slot found today: <code>${bestDateToday}</code>\n` +
+              `🗓 Your current appointment: <code>${currentBookedDate}</code>\n` +
+              (bestDateToday < currentBookedDate
+                ? `⚡ <b>Earlier slot exists!</b> Consider booking it manually.`
+                : `ℹ️ No earlier slots than your current appointment were available today.`)
+            : `📊 <b>Daily Visa Slot Report</b>\n📅 Date: <code>${todayStr}</code>\n\n` +
+              `❌ No available slots were found today.\n` +
+              `🗓 Your current appointment: <code>${currentBookedDate}</code>`;
+
+          log(`[DAILY REPORT] Sending end-of-day summary...`);
+          await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, reportMsg, defaultMarkup);
+
+          bestDateToday = null; // Reset for next day
+        }
+      } else {
+        // Reset when the hour passes so tomorrow's summary can trigger
+        reportSentForDay = null;
+      }
+      // ───────────────────────────────────────────────────────────────────────
+
+      // ── Perform the check ──────────────────────────────────────────────────
       try {
         const availableDate = await bot.checkAvailableDate(
           sessionHeaders,
@@ -210,7 +215,6 @@ export async function botCommand(options) {
         );
         consecutiveErrors = 0;
 
-        // Track checks stats
         checksCount++;
         lastCheckTime = new Date();
 
@@ -269,19 +273,21 @@ export async function botCommand(options) {
             log(`Waiting 15 seconds before retrying check...`);
             await sleep(15);
           }
-          continue;
+          continue; // Continue inside the same loop with the same sessionHeaders
         } else {
-          throw err;
+          throw err; // propagate auth/session error to outer catch block to re-login
         }
       }
 
+      // ── Sleep between ticks ────────────────────────────────────────────────
       const jitter     = Math.random() * 5;
       const totalSleep = config.refreshDelay + jitter;
       await sleep(totalSleep);
+
+    } catch (err) {
+      log(`Session/authentication error: ${err.message}. Re-initializing session in 10 seconds...`);
+      sessionHeaders = null; // Clear so that it logins again on the next loop iteration
+      await sleep(10);
     }
-  } catch (err) {
-    log(`Session/authentication error: ${err.message}. Re-initializing bot...`);
-    await sleep(10);
-    return botCommand(options);
   }
 }
