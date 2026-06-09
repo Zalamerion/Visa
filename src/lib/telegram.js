@@ -1,5 +1,4 @@
-import fetch from 'node-fetch';
-import { log } from './utils.js';
+import { log, fetchWithTimeout } from './utils.js';
 
 /**
  * Sends a message to a Telegram chat using the Telegram Bot API.
@@ -27,13 +26,13 @@ export async function sendTelegramMessage(token, chatId, message, replyMarkup = 
       payload.reply_markup = replyMarkup;
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+    }, 15000);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -62,7 +61,7 @@ export async function startTelegramListener(token, chatId, onCommand) {
 
   // Initialize offset by fetching recent updates to skip old commands sent when bot was offline
   try {
-    const initRes = await fetch(`https://api.telegram.org/bot${token}/getUpdates?limit=100`);
+    const initRes = await fetchWithTimeout(`https://api.telegram.org/bot${token}/getUpdates?limit=100`, {}, 15000);
     if (initRes.ok) {
       const data = await initRes.json();
       if (data.ok && data.result.length > 0) {
@@ -77,9 +76,9 @@ export async function startTelegramListener(token, chatId, onCommand) {
 
   while (true) {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=30`, {
+      const response = await fetchWithTimeout(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=30`, {
         headers: { 'Connection': 'keep-alive' }
-      });
+      }, 45000);
 
       if (response.ok) {
         const data = await response.json();
@@ -92,25 +91,27 @@ export async function startTelegramListener(token, chatId, onCommand) {
               const query = update.callback_query;
               if (String(query.message.chat.id) === String(chatId)) {
                 // Acknowledge the callback query so the loading spinner on the button stops
-                await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+                await fetchWithTimeout(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ callback_query_id: query.id })
-                }).catch(() => {});
+                }, 15000).catch(() => {});
 
                 log(`Telegram action clicked: ${query.data}`);
                 // Trigger callback
-                onCommand(query.data).catch(err => log(`Error handling callback: ${err.message}`));
+                onCommand({ type: 'callback', cmd: query.data, args: [] }).catch(err => log(`Error handling callback: ${err.message}`));
               }
             }
 
             // Handle Standard Text Commands
             if (update.message && String(update.message.chat.id) === String(chatId)) {
-              const text = update.message.text?.trim().toLowerCase();
-              if (text === '/status' || text === '/check') {
+              const text = update.message.text?.trim();
+              if (text && text.startsWith('/')) {
                 log(`Telegram text command received: ${text}`);
-                const cmd = text === '/status' ? 'status_now' : 'check_now';
-                onCommand(cmd).catch(err => log(`Error handling text command: ${err.message}`));
+                const parts = text.split(' ');
+                const cmd = parts[0].toLowerCase();
+                const args = parts.slice(1);
+                onCommand({ type: 'text_command', cmd, args }).catch(err => log(`Error handling text command: ${err.message}`));
               }
             }
           }

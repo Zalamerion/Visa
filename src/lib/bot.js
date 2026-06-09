@@ -8,9 +8,9 @@ export class Bot {
     this.client = new VisaHttpClient(this.config.countryCode, this.config.email, this.config.password);
   }
 
-  async initialize() {
+  async initialize(userAgent) {
     log('Initializing visa bot...');
-    return await this.client.login();
+    return await this.client.login(userAgent);
   }
 
   async checkAvailableDate(sessionHeaders, currentBookedDate, minDate) {

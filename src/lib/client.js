@@ -1,15 +1,16 @@
-import fetch from "node-fetch";
 import cheerio from 'cheerio';
-import { log } from './utils.js';
+import { log, fetchWithTimeout } from './utils.js';
 import { getBaseUri } from './config.js';
 
-// Common headers
-const COMMON_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Connection': 'close',
-  'Cache-Control': 'no-store'
-};
+// Build common headers — caller provides the User-Agent so it can be rotated
+function buildCommonHeaders(userAgent) {
+  return {
+    'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'close',
+    'Cache-Control': 'no-store'
+  };
+}
 
 export class VisaHttpClient {
   constructor(countryCode, email, password) {
@@ -19,11 +20,12 @@ export class VisaHttpClient {
   }
 
   // Public API methods
-  async login() {
-    log('Logging in');
+  async login(userAgent) {
+    log(`Logging in with UA: ${(userAgent || 'default').slice(0, 60)}...`);
+    this._sessionUserAgent = userAgent; // store for _extractHeaders
 
-    const anonymousHeaders = await this._anonymousRequest(`${this.baseUri}/users/sign_in`)
-      .then(response => this._extractHeaders(response));
+    const anonymousHeaders = await this._anonymousRequest(`${this.baseUri}/users/sign_in`, {}, userAgent)
+      .then(response => this._extractHeaders(response, userAgent));
 
     const loginData = {
       'utf8': '✓',
@@ -77,44 +79,44 @@ export class VisaHttpClient {
   }
 
   // Private request methods
-  async _anonymousRequest(url, headers = {}) {
-    return fetch(url, {
+  async _anonymousRequest(url, headers = {}, userAgent) {
+    return fetchWithTimeout(url, {
       headers: {
-        "User-Agent": "",
+        "User-Agent": userAgent || '',
         "Accept": "*/*",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
         ...headers
       }
-    });
+    }, 15000);
   }
 
   async _jsonRequest(url, headers = {}) {
-    return fetch(url, {
+    return fetchWithTimeout(url, {
       headers: {
         ...headers,
         "Accept": "application/json",
         "X-Requested-With": "XMLHttpRequest"
       },
       cache: "no-store"
-    })
+    }, 15000)
       .then(r => r.json())
       .then(r => this._handleErrors(r));
   }
 
   async _submitForm(url, headers = {}, formData = {}) {
-    return fetch(url, {
+    return fetchWithTimeout(url, {
       method: "POST",
       headers: {
         ...headers,
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
       },
       body: new URLSearchParams(formData)
-    });
+    }, 15000);
   }
 
   async _submitFormWithRedirect(url, headers = {}, formData = {}) {
-    return fetch(url, {
+    return fetchWithTimeout(url, {
       method: "POST",
       redirect: "follow",
       headers: {
@@ -122,18 +124,23 @@ export class VisaHttpClient {
         'Content-Type': 'application/x-www-form-urlencoded'
       },
       body: new URLSearchParams(formData)
-    });
+    }, 30000);
   }
 
   // Private utility methods
-  async _extractHeaders(res) {
+  async _extractHeaders(res, userAgent) {
     const cookies = this._extractRelevantCookies(res);
     const html = await res.text();
     const $ = cheerio.load(html);
     const csrfToken = $('meta[name="csrf-token"]').attr('content');
 
+    if (!csrfToken) {
+      // Got HTML without a CSRF token — likely login page returned after session expired
+      throw new Error('SESSION_EXPIRED: No CSRF token found in response HTML');
+    }
+
     return {
-      ...COMMON_HEADERS,
+      ...buildCommonHeaders(userAgent || this._sessionUserAgent),
       "Cookie": cookies,
       "X-CSRF-Token": csrfToken,
       "Referer": this.baseUri,

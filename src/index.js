@@ -146,7 +146,7 @@ async function main() {
 
   // Options
   console.log('\n── Bot Options ─────────────────────────');
-  const refreshDelay = await ask(rl, '⏳ Check interval in seconds', saved.refreshDelay || process.env.REFRESH_DELAY || '5');
+  const refreshDelay = await ask(rl, '⏳ Check interval in seconds (recommended: 300+ to avoid ban)', saved.refreshDelay || process.env.REFRESH_DELAY || '300');
   const bookMode     = await ask(rl, '⚡ Auto-book when slot found? (yes/no)', 'no');
 
   rl.close();
